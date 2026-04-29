@@ -38,6 +38,18 @@ services:
     image: confluentinc/cp-zookeeper:7.6.0
     container_name: dira-zookeeper
     environment:
+
+    kafka-ui:
+      image: provectuslabs/kafka-ui:latest
+      container_name: dira-kafka-ui
+      depends_on:
+        kafka:
+          condition: service_healthy
+      environment:
+        KAFKA_CLUSTERS_0_NAME: dira
+        KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      ports:
+        - "8082:8080"
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     ports:
@@ -87,6 +99,18 @@ services:
     volumes:
       - grafana-data:/var/lib/grafana
       - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: dira-kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: dira
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    ports:
+      - "8082:8080"
 
   prometheus:
     image: prom/prometheus:latest
