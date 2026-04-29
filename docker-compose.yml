@@ -1,3 +1,18 @@
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.9.0-python3.12
+  env_file:
+    - .env
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://dira:dira@postgres:5432/dira?options=-csearch_path%3Dairflow
+  user: "50000:0"
+  volumes:
+    - ./infra/airflow/dags:/opt/airflow/dags
+  depends_on:
+    postgres:
+      condition: service_healthy
+
 services:
   postgres:
     image: postgis/postgis:16-3.4
@@ -75,6 +90,33 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: dira-airflow-init
+    command: bash -c "airflow db migrate"
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: dira-airflow-webserver
+    command: webserver
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: dira-airflow-scheduler
+    command: scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
 
   spark-master:
     image: bitnami/spark:3.5
