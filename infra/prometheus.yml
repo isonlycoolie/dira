@@ -1,0 +1,29 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: dira-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8000"]
+
+  - job_name: dira-ingestion
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["ingestion:8001"]
+
+  - job_name: dira-pipeline
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["pipeline:8002"]
+
+  - job_name: dira-ml
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["ml:8003"]
+
+  - job_name: dira-decision-engine
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["decision_engine:8004"]
