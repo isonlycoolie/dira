@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dira-geospatial"
+version = "0.1.0"
+description = "Geospatial utilities for DIRA."
+requires-python = ">=3.12"
+dependencies = [
+  "osmnx",
+  "geopandas",
+  "shapely",
+  "h3",
+  "sqlalchemy",
+  "asyncpg",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dira_geo"]
