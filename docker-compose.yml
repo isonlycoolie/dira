@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: dira-postgres
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: dira
+      POSTGRES_USER: dira
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dira}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dira -d dira"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  pgdata:
