@@ -76,7 +76,52 @@ services:
       timeout: 5s
       retries: 5
 
+  spark-master:
+    image: bitnami/spark:3.5
+    container_name: dira-spark-master
+    environment:
+      SPARK_MODE: master
+      SPARK_RPC_AUTHENTICATION_ENABLED: "no"
+      SPARK_RPC_ENCRYPTION_ENABLED: "no"
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: "no"
+      SPARK_SSL_ENABLED: "no"
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    volumes:
+      - spark-jars:/opt/bitnami/spark/jobs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  spark-worker:
+    image: bitnami/spark:3.5
+    container_name: dira-spark-worker
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    environment:
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_WEBUI_PORT: 8081
+      SPARK_RPC_AUTHENTICATION_ENABLED: "no"
+      SPARK_RPC_ENCRYPTION_ENABLED: "no"
+      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: "no"
+      SPARK_SSL_ENABLED: "no"
+    ports:
+      - "8081:8081"
+    volumes:
+      - spark-jars:/opt/bitnami/spark/jobs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   pgdata:
   kafka-data:
   redis-data:
+  spark-jars:
