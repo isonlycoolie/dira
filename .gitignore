@@ -1,0 +1,21 @@
+# Project-specific
+/DIRA_Implementation_Plan Phase-01.md
+/.github/skills/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Docker and environment files
+.env
+
+# IDEs
+.idea/
+.vscode/
+
+# Spark
+derby.log
+
+# Data artifacts
+*.parquet
