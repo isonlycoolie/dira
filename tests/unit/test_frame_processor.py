@@ -74,3 +74,25 @@ def test_frame_processor_samples_every_fifteenth_frame(monkeypatch, caplog) -> N
     assert all(result.detections for result in results)
     assert "Processed frame 15 from camera.mp4" in caplog.text
     assert "Processed frame 30 from camera.mp4" in caplog.text
+
+
+def test_frame_processor_skips_frame_after_high_latency(monkeypatch, caplog) -> None:
+    frames = [f"frame-{index}" for index in range(1, 46)]
+    capture = _FakeCapture(frames)
+    fake_cv2 = _FakeCv2(capture)
+    detector = _FakeDetector()
+    latency_values = iter([0.0, 0.1, 0.2, 0.22])
+
+    monkeypatch.setattr(frame_processor_module, "_load_cv2", lambda: fake_cv2)
+    monkeypatch.setattr(frame_processor_module, "perf_counter", lambda: next(latency_values))
+
+    processor = FrameProcessor(detector=detector, frame_skip_interval=15, max_latency_ms=50.0)
+
+    with caplog.at_level("DEBUG"):
+        results = list(processor.process("camera.mp4"))
+
+    assert capture.released is True
+    assert detector.frames == ["frame-15", "frame-45"]
+    assert [result.frame_index for result in results] == [15, 45]
+    assert processor.frames_processed == 2
+    assert "Skipping frame 30 from camera.mp4" in caplog.text

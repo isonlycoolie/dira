@@ -32,12 +32,22 @@ def _load_cv2() -> Any:
 
 
 class FrameProcessor:
-    def __init__(self, detector: YOLODetector | None = None, frame_skip_interval: int = 15) -> None:
+    def __init__(
+        self,
+        detector: YOLODetector | None = None,
+        frame_skip_interval: int = 15,
+        max_latency_ms: float = 50.0,
+    ) -> None:
         if frame_skip_interval <= 0:
             raise ValueError("frame_skip_interval must be positive")
+        if max_latency_ms <= 0:
+            raise ValueError("max_latency_ms must be positive")
 
         self.detector = detector or YOLODetector()
         self.frame_skip_interval = frame_skip_interval
+        self.max_latency_ms = max_latency_ms
+        self.frames_processed = 0
+        self._last_inference_latency_ms: float | None = None
 
     def process(self, video_source: str) -> Iterator[FrameResult]:
         cv2 = _load_cv2()
@@ -56,9 +66,22 @@ class FrameProcessor:
                 if frame_index % self.frame_skip_interval != 0:
                     continue
 
+                if self._last_inference_latency_ms is not None and self._last_inference_latency_ms > self.max_latency_ms:
+                    logger.debug(
+                        "Skipping frame %s from %s because previous inference latency %.2f ms exceeded %.2f ms",
+                        frame_index,
+                        video_source,
+                        self._last_inference_latency_ms,
+                        self.max_latency_ms,
+                    )
+                    self._last_inference_latency_ms = None
+                    continue
+
+                self.frames_processed += 1
                 inference_started = perf_counter()
                 detections = self.detector.detect(frame)
                 inference_latency_ms = (perf_counter() - inference_started) * 1000.0
+                self._last_inference_latency_ms = inference_latency_ms
                 logger.info(
                     "Processed frame %s from %s in %.2f ms",
                     frame_index,
