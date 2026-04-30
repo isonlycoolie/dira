@@ -161,6 +161,42 @@ class PrometheusRegistry:
         "Total CCTV stream reconnect attempts.",
         (),
     )
+    fleet_points_ingested_total = _get_metric(
+        "fleet_points_ingested_total",
+        "counter",
+        "Total Fleet GPS points successfully ingested.",
+        (),
+    )
+    fleet_points_invalid_total = _get_metric(
+        "fleet_points_invalid_total",
+        "counter",
+        "Total Fleet GPS points rejected as invalid.",
+        (),
+    )
+    incident_reports_received_total = _get_metric(
+        "incident_reports_received_total",
+        "counter",
+        "Total incident reports received by the incident connector.",
+        (),
+    )
+    incident_duplicates_filtered_total = _get_metric(
+        "incident_duplicates_filtered_total",
+        "counter",
+        "Total duplicate incident reports filtered by Redis deduplication.",
+        (),
+    )
+    weather_fetches_total = _get_metric(
+        "weather_fetches_total",
+        "counter",
+        "Total weather fetch attempts made by the weather connector.",
+        (),
+    )
+    weather_fetch_errors_total = _get_metric(
+        "weather_fetch_errors_total",
+        "counter",
+        "Total weather connector fetch or publish errors.",
+        (),
+    )
 
 
 messages_published = PrometheusRegistry.messages_published
@@ -179,3 +215,9 @@ cctv_vehicles_detected_total = PrometheusRegistry.cctv_vehicles_detected_total
 cctv_inference_latency_ms = PrometheusRegistry.cctv_inference_latency_ms
 cctv_detections_published_total = PrometheusRegistry.cctv_detections_published_total
 cctv_stream_reconnects_total = PrometheusRegistry.cctv_stream_reconnects_total
+fleet_points_ingested_total = PrometheusRegistry.fleet_points_ingested_total
+fleet_points_invalid_total = PrometheusRegistry.fleet_points_invalid_total
+incident_reports_received_total = PrometheusRegistry.incident_reports_received_total
+incident_duplicates_filtered_total = PrometheusRegistry.incident_duplicates_filtered_total
+weather_fetches_total = PrometheusRegistry.weather_fetches_total
+weather_fetch_errors_total = PrometheusRegistry.weather_fetch_errors_total

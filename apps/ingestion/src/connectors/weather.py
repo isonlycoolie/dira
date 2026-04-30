@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from dira_common.exceptions import IngestionError
+from dira_common.metrics import PrometheusRegistry
 from dira_schemas.enums import DataSourceType, WeatherCondition
 from dira_schemas.raw import GeoPoint, RawMessage
 from dira_schemas.telecom import DSM_BBOX
@@ -85,8 +86,14 @@ class WeatherConnector(BaseConnector):
             raise IngestionError("OPENWEATHERMAP_API_KEY is required", source="config")
 
         api_url = self._build_api_url()
-        weather_payload = self._fetcher(api_url, self._api_key)
-        weather_reading = self._map_weather_reading(weather_payload)
+        try:
+            weather_payload = self._fetcher(api_url, self._api_key)
+            weather_reading = self._map_weather_reading(weather_payload)
+        except Exception:  # noqa: BLE001
+            PrometheusRegistry.weather_fetch_errors_total.inc()
+            raise
+
+        PrometheusRegistry.weather_fetches_total.inc()
 
         raw_message = RawMessage(
             source=DataSourceType.WEATHER,

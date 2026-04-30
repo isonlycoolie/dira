@@ -10,6 +10,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from dira_common.exceptions import IngestionError
+from dira_common.metrics import PrometheusRegistry
 from dira_schemas.enums import DataSourceType
 from dira_schemas.incidents import IncidentReport
 from dira_schemas.raw import GeoPoint, RawMessage
@@ -70,6 +71,7 @@ class IncidentConnector(BaseConnector):
 
     def ingest(self, report: IncidentReport) -> IncidentReport | None:
         validated_report = IncidentReport.model_validate(report.model_dump(mode="python"))
+        PrometheusRegistry.incident_reports_received_total.inc()
         if self._is_duplicate(validated_report.id):
             logger.debug("filtered duplicate incident report", incident_id=str(validated_report.id))
             return None
@@ -106,6 +108,7 @@ class IncidentConnector(BaseConnector):
     def _is_duplicate(self, incident_id: UUID) -> bool:
         dedup_key = f"dira:incident:{incident_id}:dedup"
         if self._redis.get(dedup_key) is not None:
+            PrometheusRegistry.incident_duplicates_filtered_total.inc()
             return True
 
         self._redis.set(dedup_key, "1")

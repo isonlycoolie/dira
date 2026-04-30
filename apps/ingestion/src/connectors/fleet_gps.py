@@ -10,6 +10,7 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 from dira_common.exceptions import IngestionError
+from dira_common.metrics import PrometheusRegistry
 from dira_schemas.fleet import FleetGPSPoint
 
 from .base import BaseConnector
@@ -45,13 +46,21 @@ class FleetGPSConnector(BaseConnector):
         published = 0
         payloads = self._fetcher(api_url, api_key)
         if not isinstance(payloads, list):
+            PrometheusRegistry.fleet_points_invalid_total.inc()
             raise IngestionError("fleet gps API must return a JSON array", details={"api_url": api_url}, source="ingestion")
 
         for payload in payloads:
-            normalized_payload = self._normalize_payload(payload)
-            fleet_point = FleetGPSPoint.model_validate(normalized_payload)
+            try:
+                normalized_payload = self._normalize_payload(payload)
+                fleet_point = FleetGPSPoint.model_validate(normalized_payload)
+            except Exception as exc:  # noqa: BLE001
+                PrometheusRegistry.fleet_points_invalid_total.inc()
+                logger.debug("filtered invalid fleet gps payload", error=str(exc))
+                continue
+
             self.publish(fleet_point, DEFAULT_FLEET_TOPIC)
             published += 1
+            PrometheusRegistry.fleet_points_ingested_total.inc()
 
         return published
 
