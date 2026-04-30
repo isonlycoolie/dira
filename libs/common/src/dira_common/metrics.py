@@ -4,9 +4,10 @@ import builtins
 from typing import Any
 
 try:
-    from prometheus_client import Counter, Histogram
+    from prometheus_client import Counter, Gauge, Histogram
 except ModuleNotFoundError:
     Counter = None
+    Gauge = None
     Histogram = None
 
 
@@ -48,12 +49,14 @@ def _get_metric(name: str, metric_type: str, documentation: str, labelnames: tup
     if cache_key in _METRIC_CACHE:
         return _METRIC_CACHE[cache_key]
 
-    if Counter is None or Histogram is None:
+    if Counter is None or Histogram is None or Gauge is None:
         metric = _FallbackMetric(name, documentation, metric_type, labelnames)
     elif metric_type == "counter":
         metric = Counter(name, documentation, labelnames=labelnames)
     elif metric_type == "histogram":
         metric = Histogram(name, documentation, labelnames=labelnames)
+    elif metric_type == "gauge":
+        metric = Gauge(name, documentation, labelnames=labelnames)
     else:
         metric = _FallbackMetric(name, documentation, metric_type, labelnames)
 
@@ -80,8 +83,29 @@ class PrometheusRegistry:
         "Processing latency in seconds for DIRA tasks.",
         (),
     )
+    kafka_messages_published_total = _get_metric(
+        "kafka_messages_published_total",
+        "counter",
+        "Total number of Kafka messages published by DIRA components.",
+        ("topic", "status"),
+    )
+    kafka_publish_latency_seconds = _get_metric(
+        "kafka_publish_latency_seconds",
+        "histogram",
+        "Kafka message publish latency in seconds.",
+        (),
+    )
+    kafka_consumer_lag = _get_metric(
+        "kafka_consumer_lag",
+        "gauge",
+        "Current Kafka consumer lag measured in messages.",
+        ("group_id", "topic"),
+    )
 
 
 messages_published = PrometheusRegistry.messages_published
 messages_failed = PrometheusRegistry.messages_failed
 processing_latency_seconds = PrometheusRegistry.processing_latency_seconds
+kafka_messages_published_total = PrometheusRegistry.kafka_messages_published_total
+kafka_publish_latency_seconds = PrometheusRegistry.kafka_publish_latency_seconds
+kafka_consumer_lag = PrometheusRegistry.kafka_consumer_lag
