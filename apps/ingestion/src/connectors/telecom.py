@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
 from typing import Any
 
@@ -13,10 +14,39 @@ from dira_schemas.telecom import TelecomPing
 from .base import BaseConnector
 
 
+class _LocalRedisClient:
+    def __init__(self) -> None:
+        self._values: dict[str, str] = {}
+        self._ttl_seconds: dict[str, int] = {}
+
+    def get(self, key: str) -> str | None:
+        return self._values.get(key)
+
+    def set(self, key: str, value: str) -> None:
+        self._values[key] = value
+
+    def expire(self, key: str, seconds: int) -> None:
+        self._ttl_seconds[key] = seconds
+
+
+def _load_redis_client(redis_url: str) -> Any:
+    try:
+        import redis
+    except ModuleNotFoundError:
+        return _LocalRedisClient()
+
+    return redis.Redis.from_url(redis_url, decode_responses=True)
+
+
 class TelecomConnector(BaseConnector):
-    def __init__(self, brokers: Sequence[str] | None = None) -> None:
+    def __init__(
+        self,
+        brokers: Sequence[str] | None = None,
+        redis_client: Any | None = None,
+        redis_url: str | None = None,
+    ) -> None:
         super().__init__(brokers=brokers)
-        self._tower_dwell_start: dict[tuple[str, str], datetime] = {}
+        self._redis = redis_client or _load_redis_client(redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0"))
 
     def connect(self) -> None:
         self._connect_producer()
@@ -71,13 +101,29 @@ class TelecomConnector(BaseConnector):
         return digest
 
     def _is_residential(self, device_hash: str, tower_id: str, timestamp: datetime) -> bool:
-        dwell_key = (device_hash, tower_id)
-        first_seen = self._tower_dwell_start.get(dwell_key)
-        if first_seen is None:
-            self._tower_dwell_start[dwell_key] = timestamp
+        normalized_timestamp = timestamp if timestamp.tzinfo is not None else timestamp.replace(tzinfo=UTC)
+        dwell_key = f"dira:device:{device_hash}:tower_dwell"
+        raw_value = self._redis.get(dwell_key)
+        if raw_value is None:
+            self._redis.set(dwell_key, f"{tower_id}|{normalized_timestamp.isoformat()}")
+            self._redis.expire(dwell_key, int(timedelta(minutes=15).total_seconds()))
             return False
 
-        if timestamp - first_seen >= timedelta(minutes=15):
-            return True
+        stored_tower_id, _, first_seen_text = str(raw_value).partition("|")
+        if stored_tower_id != tower_id:
+            self._redis.set(dwell_key, f"{tower_id}|{normalized_timestamp.isoformat()}")
+            self._redis.expire(dwell_key, int(timedelta(minutes=15).total_seconds()))
+            return False
 
-        return False
+        try:
+            first_seen = datetime.fromisoformat(first_seen_text)
+        except ValueError:
+            first_seen = normalized_timestamp
+
+        if first_seen.tzinfo is None:
+            first_seen = first_seen.replace(tzinfo=UTC)
+
+        is_residential = normalized_timestamp - first_seen >= timedelta(minutes=15)
+        self._redis.set(dwell_key, f"{tower_id}|{first_seen.isoformat()}")
+        self._redis.expire(dwell_key, int(timedelta(minutes=15).total_seconds()))
+        return is_residential
