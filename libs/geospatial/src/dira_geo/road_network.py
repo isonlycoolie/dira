@@ -231,6 +231,7 @@ class RoadNetworkLoader:
         prepared = self._prepare_road_edges_frame(gdf, gpd)
         prepared.to_postgis("road_edges", engine, if_exists="replace", index=False)
         self._precompute_buffers(engine)
+        self._assign_h3_cells(engine)
         logger.info("loaded road edges rows=%s", int(len(prepared)))
 
     def _prepare_road_edges_frame(self, gdf: Any, gpd: Any) -> Any:
@@ -278,6 +279,16 @@ class RoadNetworkLoader:
             f"UPDATE road_edges SET buffer_geom = ST_Buffer(geom::geography, {road_buffer_meters})::geometry"
         )
         logger.info("precomputed road buffers meters=%s", road_buffer_meters)
+
+    def _assign_h3_cells(self, engine: Any, resolution: int = 9) -> None:
+        execute = getattr(engine, "execute", None)
+        if not callable(execute):
+            return
+
+        execute(
+            f"UPDATE road_edges SET h3_index = h3_lat_lng_to_cell(ST_Y(ST_Centroid(geom)), ST_X(ST_Centroid(geom)), {resolution})"
+        )
+        logger.info("assigned h3 indices resolution=%s", resolution)
 
     def _coerce_osm_id(self, value: Any) -> int | None:
         if isinstance(value, (list, tuple, set)):
