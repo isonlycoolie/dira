@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "Cross-cutting utilities for DIRA."
 requires-python = ">=3.12"
 dependencies = [
+  "pydantic>=2.7",
+  "pydantic-settings>=2.7",
   "structlog",
   "prometheus-client",
   "tenacity",
