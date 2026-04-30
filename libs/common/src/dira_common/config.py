@@ -72,6 +72,10 @@ class DiraSettings(BaseSettings):
     kafka_brokers: list[str] = Field(validation_alias="KAFKA_BROKERS")
     gcs_bucket_prefix: str = Field(validation_alias="GCS_BUCKET_PREFIX")
     dsm_bbox: tuple[float, float, float, float] = Field(validation_alias="DSM_BBOX")
+    spark_master_url: str = Field(validation_alias="SPARK_MASTER_URL")
+    airflow_db_url: str = Field(validation_alias="AIRFLOW_DB_URL")
+    openweathermap_api_key: str = Field(validation_alias="OPENWEATHERMAP_API_KEY")
+    road_buffer_meters: int = Field(default=50, validation_alias="ROAD_BUFFER_METERS")
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
     env: Literal["dev", "prod"] = Field(default="dev", validation_alias="ENV")
 
@@ -98,3 +102,10 @@ class DiraSettings(BaseSettings):
             raise ValueError("DSM_BBOX must contain four values")
 
         return tuple(float(part) for part in parts)
+
+    @field_validator("road_buffer_meters")
+    @classmethod
+    def validate_road_buffer_meters(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("ROAD_BUFFER_METERS must be positive")
+        return value
