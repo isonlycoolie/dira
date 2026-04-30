@@ -230,6 +230,7 @@ class RoadNetworkLoader:
         gpd = _load_geopandas()
         prepared = self._prepare_road_edges_frame(gdf, gpd)
         prepared.to_postgis("road_edges", engine, if_exists="replace", index=False)
+        self._precompute_buffers(engine)
         logger.info("loaded road edges rows=%s", int(len(prepared)))
 
     def _prepare_road_edges_frame(self, gdf: Any, gpd: Any) -> Any:
@@ -267,6 +268,16 @@ class RoadNetworkLoader:
         ]
         prepared = frame.reindex(columns=ordered_columns)
         return gpd.GeoDataFrame(prepared, geometry="geom", crs=getattr(gdf, "crs", None))
+
+    def _precompute_buffers(self, engine: Any, road_buffer_meters: int = 50) -> None:
+        execute = getattr(engine, "execute", None)
+        if not callable(execute):
+            return
+
+        execute(
+            f"UPDATE road_edges SET buffer_geom = ST_Buffer(geom::geography, {road_buffer_meters})::geometry"
+        )
+        logger.info("precomputed road buffers meters=%s", road_buffer_meters)
 
     def _coerce_osm_id(self, value: Any) -> int | None:
         if isinstance(value, (list, tuple, set)):
