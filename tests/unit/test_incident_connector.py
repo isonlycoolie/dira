@@ -86,6 +86,19 @@ def test_incident_connector_ingest_publishes_once_and_filters_duplicates(monkeyp
     assert fake_redis.expiries[f"dira:incident:{report.id}:dedup"] == 1800
 
 
+def test_incident_connector_is_duplicate_uses_redis_cache() -> None:
+    fake_redis = _FakeRedis()
+    connector = IncidentConnector(redis_client=fake_redis)
+    incident_id = uuid4()
+    dedup_key = f"dira:incident:{incident_id}:dedup"
+
+    assert connector._is_duplicate(incident_id) is False
+    assert fake_redis.values[dedup_key] == "1"
+    assert fake_redis.expiries[dedup_key] == 1800
+
+    assert connector._is_duplicate(incident_id) is True
+
+
 def test_incident_connector_parses_whatsapp_webhook_payload() -> None:
     connector = IncidentConnector(redis_client=_FakeRedis())
     incident_id = uuid4()
