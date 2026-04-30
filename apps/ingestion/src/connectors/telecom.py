@@ -9,7 +9,7 @@ from typing import Any
 from dira_common.exceptions import IngestionError
 from dira_schemas.enums import DataSourceType
 from dira_schemas.raw import GeoPoint, RawMessage
-from dira_schemas.telecom import TelecomPing
+from dira_schemas.telecom import DSM_BBOX, TelecomPing
 
 from .base import BaseConnector
 
@@ -44,9 +44,11 @@ class TelecomConnector(BaseConnector):
         brokers: Sequence[str] | None = None,
         redis_client: Any | None = None,
         redis_url: str | None = None,
+        dsm_bbox: tuple[float, float, float, float] | None = None,
     ) -> None:
         super().__init__(brokers=brokers)
         self._redis = redis_client or _load_redis_client(redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+        self._dsm_bbox = dsm_bbox or DSM_BBOX
 
     def connect(self) -> None:
         self._connect_producer()
@@ -65,6 +67,16 @@ class TelecomConnector(BaseConnector):
         filtered = 0
 
         for ping_payload in pings:
+            lat = ping_payload.get("lat")
+            lon = ping_payload.get("lon")
+            try:
+                if lat is None or lon is None or not self._in_dsm_bbox(float(lat), float(lon)):
+                    filtered += 1
+                    continue
+            except (TypeError, ValueError):
+                filtered += 1
+                continue
+
             try:
                 ping = TelecomPing.model_validate(ping_payload)
             except Exception:  # noqa: BLE001
@@ -99,6 +111,10 @@ class TelecomConnector(BaseConnector):
         daily_salt = date.today().isoformat()
         digest = sha256(f"{raw_id}{daily_salt}".encode("utf-8")).hexdigest()
         return digest
+
+    def _in_dsm_bbox(self, lat: float, lon: float) -> bool:
+        south, west, north, east = self._dsm_bbox
+        return south <= lat <= north and west <= lon <= east
 
     def _is_residential(self, device_hash: str, tower_id: str, timestamp: datetime) -> bool:
         normalized_timestamp = timestamp if timestamp.tzinfo is not None else timestamp.replace(tzinfo=UTC)
