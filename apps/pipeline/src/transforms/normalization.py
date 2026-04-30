@@ -126,4 +126,107 @@ def deserialize(df: DataFrame, source_type: DataSourceType) -> DataFrame:
     )
 
 
-__all__ = ["SOURCE_SCHEMA_BUILDERS", "deserialize"]
+class NormalizationTransform:
+    MILES_TO_KILOMETERS = 1.60934
+    SOURCE_TIMESTAMP_COLUMNS: dict[DataSourceType, str] = {
+        DataSourceType.TELECOM: "timestamp",
+        DataSourceType.CCTV: "frame_timestamp",
+        DataSourceType.FLEET_GPS: "timestamp",
+        DataSourceType.INCIDENT: "reported_at",
+        DataSourceType.WEATHER: "timestamp",
+        DataSourceType.FUSED: "event_time",
+    }
+
+    def __init__(
+        self,
+        segment_speed_lookup: DataFrame | None = None,
+        lookup_speed_column: str = "historical_median_speed_kmh",
+        road_segment_column: str = "road_segment_id",
+    ) -> None:
+        self._segment_speed_lookup = segment_speed_lookup
+        self._lookup_speed_column = lookup_speed_column
+        self._road_segment_column = road_segment_column
+
+    def normalize(self, df: DataFrame, source_type: DataSourceType) -> DataFrame:
+        normalized = df
+        normalized = self._standardize_coordinates(normalized)
+        normalized = self._standardize_timestamp(normalized, source_type)
+        normalized = self._standardize_speed_columns(normalized)
+        normalized = self._fill_missing_average_speed(normalized)
+        return normalized
+
+    def apply(self, df: DataFrame, source_type: DataSourceType) -> DataFrame:
+        return self.normalize(df, source_type)
+
+    def _standardize_coordinates(self, df: DataFrame) -> DataFrame:
+        columns = list(getattr(df, "columns", []))
+        renames = (("latitude", "lat"), ("longitude", "lon"), ("lng", "lon"))
+        normalized = df
+        for source_name, target_name in renames:
+            if source_name not in columns or target_name in columns:
+                continue
+            normalized = normalized.withColumnRenamed(source_name, target_name)
+            columns = list(getattr(normalized, "columns", []))
+        return normalized
+
+    def _standardize_timestamp(self, df: DataFrame, source_type: DataSourceType) -> DataFrame:
+        from pyspark.sql.functions import col, to_utc_timestamp
+
+        timestamp_column = self.SOURCE_TIMESTAMP_COLUMNS.get(source_type)
+        if timestamp_column is None:
+            raise ValueError(f"unsupported source type for normalization: {source_type}")
+
+        normalized = df.withColumn(
+            "event_time",
+            to_utc_timestamp(col(timestamp_column), "UTC"),
+        )
+        if timestamp_column != "event_time":
+            normalized = normalized.drop(timestamp_column)
+        return normalized
+
+    def _standardize_speed_columns(self, df: DataFrame) -> DataFrame:
+        from pyspark.sql.functions import col, lit
+
+        columns = list(getattr(df, "columns", []))
+        normalized = df
+        for column_name in columns:
+            if not column_name.endswith("_mph"):
+                continue
+
+            kmh_column_name = f"{column_name[:-4]}_kmh"
+            if kmh_column_name in columns:
+                continue
+
+            normalized = normalized.withColumn(
+                kmh_column_name,
+                col(column_name) * lit(self.MILES_TO_KILOMETERS),
+            ).drop(column_name)
+            columns = list(getattr(normalized, "columns", []))
+
+        return normalized
+
+    def _fill_missing_average_speed(self, df: DataFrame) -> DataFrame:
+        if self._segment_speed_lookup is None:
+            return df
+
+        columns = list(getattr(df, "columns", []))
+        if "avg_speed_kmh" not in columns or self._road_segment_column not in columns:
+            return df
+
+        lookup_columns = list(getattr(self._segment_speed_lookup, "columns", []))
+        required_lookup_columns = {self._road_segment_column, self._lookup_speed_column}
+        if not required_lookup_columns.issubset(set(lookup_columns)):
+            raise ValueError(
+                "segment speed lookup must contain road segment and historical speed columns"
+            )
+
+        from pyspark.sql.functions import col, coalesce
+
+        joined = df.join(self._segment_speed_lookup, self._road_segment_column, "left")
+        return joined.withColumn(
+            "avg_speed_kmh",
+            coalesce(col("avg_speed_kmh"), col(self._lookup_speed_column)),
+        ).drop(self._lookup_speed_column)
+
+
+__all__ = ["NormalizationTransform", "SOURCE_SCHEMA_BUILDERS", "deserialize"]
