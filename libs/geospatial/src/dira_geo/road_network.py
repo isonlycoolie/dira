@@ -44,6 +44,14 @@ def _load_geopandas() -> Any:
     return gpd
 
 
+def _load_shapely_box() -> Any:
+    try:
+        from shapely.geometry import box
+    except ModuleNotFoundError as exc:  # pragma: no cover - exercised when dependency is absent
+        raise RuntimeError("shapely is required for road network geometry validation") from exc
+    return box
+
+
 @contextmanager
 def _temporary_useful_tags(ox: Any, useful_tags_edge: Sequence[str]):
     settings = getattr(ox, "settings", None)
@@ -79,7 +87,8 @@ class OsmRoadNetworkExtractor:
 
         edges = edges.reset_index()
         filtered_edges = self._filter_road_types(edges)
-        return gpd.GeoDataFrame(filtered_edges)
+        validated_edges = self._validate_geometries(filtered_edges, bbox)
+        return gpd.GeoDataFrame(validated_edges)
 
     def _normalize_bbox(self, bbox: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
         south, west, north, east = bbox
@@ -108,9 +117,65 @@ class OsmRoadNetworkExtractor:
         highway_values = edges["highway"].apply(normalize_highway)
         filtered_edges = edges[highway_values.notna()].copy()
         dropped_count = int(len(edges) - len(filtered_edges))
-        logger.info("filtered road types", dropped_count=dropped_count, kept_count=int(len(filtered_edges)))
+        logger.info(
+            "filtered road types dropped=%s kept=%s",
+            dropped_count,
+            int(len(filtered_edges)),
+        )
         filtered_edges["highway"] = highway_values[highway_values.notna()].values
         return filtered_edges
+
+    def _validate_geometries(self, edges: Any, bbox: tuple[float, float, float, float]) -> Any:
+        if "geometry" not in edges.columns:
+            return edges
+
+        box = _load_shapely_box()
+        north, south, east, west = self._normalize_bbox(bbox)
+        clip_box = box(west, south, east, north)
+
+        valid_edges = edges[edges["geometry"].notna()].copy()
+        null_dropped = int(len(edges) - len(valid_edges))
+        if null_dropped:
+            logger.warning("dropped null geometries dropped=%s", null_dropped)
+
+        clipped_count = 0
+        repaired_count = 0
+
+        def repair_geometry(geometry: Any) -> Any:
+            nonlocal clipped_count, repaired_count
+            if geometry is None:
+                return None
+
+            if getattr(geometry, "is_empty", False):
+                return None
+
+            repaired_geometry = geometry
+            if not getattr(repaired_geometry, "is_valid", True):
+                repaired_geometry = repaired_geometry.buffer(0)
+                repaired_count += 1
+
+            try:
+                clipped_geometry = repaired_geometry.intersection(clip_box)
+            except Exception:  # noqa: BLE001
+                clipped_geometry = repaired_geometry
+            else:
+                if clipped_geometry is not repaired_geometry:
+                    clipped_count += 1
+
+            if getattr(clipped_geometry, "is_empty", False):
+                return None
+
+            return clipped_geometry
+
+        valid_edges["geometry"] = valid_edges["geometry"].apply(repair_geometry)
+        valid_edges = valid_edges[valid_edges["geometry"].notna()].copy()
+
+        if repaired_count:
+            logger.warning("repaired invalid geometries repaired=%s", repaired_count)
+        if clipped_count:
+            logger.warning("clipped geometries to bbox clipped=%s", clipped_count)
+
+        return valid_edges
 
     def _graph_from_bbox(
         self,
