@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from contextlib import contextmanager
+import logging
 from typing import Any
 
 DEFAULT_USEFUL_TAGS_EDGE: tuple[str, ...] = (
@@ -16,6 +17,15 @@ DEFAULT_USEFUL_TAGS_EDGE: tuple[str, ...] = (
     "tunnel",
     "junction",
 )
+
+ALLOWED_ROAD_TYPES: tuple[str, ...] = (
+    "primary",
+    "secondary",
+    "tertiary",
+    "residential",
+)
+
+logger = logging.getLogger(__name__)
 
 
 def _load_osmnx() -> Any:
@@ -68,11 +78,39 @@ class OsmRoadNetworkExtractor:
             _, edges = ox.graph_to_gdfs(graph, nodes=True, edges=True, fill_edge_geometry=True)
 
         edges = edges.reset_index()
-        return gpd.GeoDataFrame(edges)
+        filtered_edges = self._filter_road_types(edges)
+        return gpd.GeoDataFrame(filtered_edges)
 
     def _normalize_bbox(self, bbox: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
         south, west, north, east = bbox
         return north, south, east, west
+
+    def _filter_road_types(self, edges: Any) -> Any:
+        if "highway" not in edges.columns:
+            return edges
+
+        allowed = {road_type.lower() for road_type in ALLOWED_ROAD_TYPES}
+
+        def normalize_highway(value: Any) -> str | None:
+            if isinstance(value, (list, tuple, set)):
+                for item in value:
+                    normalized = str(item).lower()
+                    if normalized in allowed:
+                        return normalized
+                return None
+
+            if value is None:
+                return None
+
+            normalized = str(value).lower()
+            return normalized if normalized in allowed else None
+
+        highway_values = edges["highway"].apply(normalize_highway)
+        filtered_edges = edges[highway_values.notna()].copy()
+        dropped_count = int(len(edges) - len(filtered_edges))
+        logger.info("filtered road types", dropped_count=dropped_count, kept_count=int(len(filtered_edges)))
+        filtered_edges["highway"] = highway_values[highway_values.notna()].values
+        return filtered_edges
 
     def _graph_from_bbox(
         self,
