@@ -4,9 +4,11 @@ import os
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from hashlib import sha256
+from time import perf_counter
 from typing import Any
 
 from dira_common.exceptions import IngestionError
+from dira_common.metrics import PrometheusRegistry
 from dira_schemas.enums import DataSourceType
 from dira_schemas.raw import GeoPoint, RawMessage
 from dira_schemas.telecom import DSM_BBOX, TelecomPing
@@ -67,24 +69,29 @@ class TelecomConnector(BaseConnector):
         filtered = 0
 
         for ping_payload in pings:
+            PrometheusRegistry.telecom_pings_received_total.inc()
             lat = ping_payload.get("lat")
             lon = ping_payload.get("lon")
             try:
                 if lat is None or lon is None or not self._in_dsm_bbox(float(lat), float(lon)):
                     filtered += 1
+                    PrometheusRegistry.telecom_pings_filtered_bbox_total.inc()
                     continue
             except (TypeError, ValueError):
                 filtered += 1
+                PrometheusRegistry.telecom_pings_filtered_bbox_total.inc()
                 continue
 
             try:
                 ping = TelecomPing.model_validate(ping_payload)
             except Exception:  # noqa: BLE001
                 filtered += 1
+                PrometheusRegistry.telecom_pings_filtered_bbox_total.inc()
                 continue
 
             if self._is_residential(ping.device_id_hash, ping.tower_id, ping.timestamp):
                 filtered += 1
+                PrometheusRegistry.telecom_pings_filtered_residential_total.inc()
                 continue
 
             anonymized_device_id = self._anonymize_device_id(ping.device_id_hash)
@@ -98,12 +105,16 @@ class TelecomConnector(BaseConnector):
                     "signal_strength": ping.signal_strength,
                 },
             )
+            publish_started = perf_counter()
             try:
                 self.publish(raw_message, "dira.raw.telecom")
             except IngestionError:
                 raise
             else:
                 published += 1
+                PrometheusRegistry.telecom_pings_published_total.inc()
+            finally:
+                PrometheusRegistry.telecom_publish_latency_seconds.observe(perf_counter() - publish_started)
 
         return published, filtered
 

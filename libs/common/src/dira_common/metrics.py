@@ -101,6 +101,36 @@ class PrometheusRegistry:
         "Current Kafka consumer lag measured in messages.",
         ("group_id", "topic"),
     )
+    telecom_pings_received_total = _get_metric(
+        "telecom_pings_received_total",
+        "counter",
+        "Total telecom pings received by the telecom connector.",
+        (),
+    )
+    telecom_pings_filtered_residential_total = _get_metric(
+        "telecom_pings_filtered_residential_total",
+        "counter",
+        "Total telecom pings filtered by the residential signal filter.",
+        (),
+    )
+    telecom_pings_filtered_bbox_total = _get_metric(
+        "telecom_pings_filtered_bbox_total",
+        "counter",
+        "Total telecom pings filtered outside the DSM bounding box.",
+        (),
+    )
+    telecom_pings_published_total = _get_metric(
+        "telecom_pings_published_total",
+        "counter",
+        "Total telecom pings published to Kafka.",
+        (),
+    )
+    telecom_publish_latency_seconds = _get_metric(
+        "telecom_publish_latency_seconds",
+        "histogram",
+        "Latency for publishing telecom messages to Kafka.",
+        (),
+    )
 
 
 messages_published = PrometheusRegistry.messages_published
@@ -109,3 +139,8 @@ processing_latency_seconds = PrometheusRegistry.processing_latency_seconds
 kafka_messages_published_total = PrometheusRegistry.kafka_messages_published_total
 kafka_publish_latency_seconds = PrometheusRegistry.kafka_publish_latency_seconds
 kafka_consumer_lag = PrometheusRegistry.kafka_consumer_lag
+telecom_pings_received_total = PrometheusRegistry.telecom_pings_received_total
+telecom_pings_filtered_residential_total = PrometheusRegistry.telecom_pings_filtered_residential_total
+telecom_pings_filtered_bbox_total = PrometheusRegistry.telecom_pings_filtered_bbox_total
+telecom_pings_published_total = PrometheusRegistry.telecom_pings_published_total
+telecom_publish_latency_seconds = PrometheusRegistry.telecom_publish_latency_seconds
