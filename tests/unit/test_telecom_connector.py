@@ -19,6 +19,7 @@ for package_path in (
 
 from connectors import telecom as telecom_module
 from connectors.telecom import TelecomConnector
+from dira_common.exceptions import IngestionError
 from dira_common.metrics import PrometheusRegistry
 
 
@@ -85,12 +86,17 @@ def _metric_value(metric: object) -> float:
     raise AssertionError("unable to read metric value")
 
 
-def test_telecom_connector_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(telecom_module, "_load_redis_client", lambda redis_url: _FakeRedis())
+def _make_connector(monkeypatch: pytest.MonkeyPatch) -> tuple[TelecomConnector, _FakeRedis, _FakeProducer]:
+    fake_redis = _FakeRedis()
+    fake_producer = _FakeProducer()
+    monkeypatch.setattr(telecom_module, "_load_redis_client", lambda redis_url: fake_redis)
     monkeypatch.setattr(telecom_module, "_LocalRedisClient", _FakeRedis)
-    monkeypatch.setattr(telecom_module.BaseConnector, "_connect_producer", lambda self: setattr(self, "_producer", _FakeProducer()))
+    monkeypatch.setattr(telecom_module.BaseConnector, "_connect_producer", lambda self: setattr(self, "_producer", fake_producer))
+    return TelecomConnector(), fake_redis, fake_producer
 
-    connector = TelecomConnector()
+
+def test_telecom_connector_batch_publish_success_tracks_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    connector, _, _ = _make_connector(monkeypatch)
     start_received = _metric_value(PrometheusRegistry.telecom_pings_received_total)
     start_bbox = _metric_value(PrometheusRegistry.telecom_pings_filtered_bbox_total)
     start_residential = _metric_value(PrometheusRegistry.telecom_pings_filtered_residential_total)
@@ -136,3 +142,68 @@ def test_telecom_connector_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _metric_value(PrometheusRegistry.telecom_pings_filtered_residential_total) == start_residential + 1
     assert _metric_value(PrometheusRegistry.telecom_pings_published_total) == start_published + 2
     assert len(getattr(PrometheusRegistry.telecom_publish_latency_seconds, "samples", [])) == start_latency_samples + 2
+
+
+def test_telecom_connector_residential_filter_after_fifteen_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
+    connector, _, _ = _make_connector(monkeypatch)
+
+    published, filtered = connector.ingest_batch(
+        [
+            {
+                "device_id_hash": "device-b",
+                "tower_id": "tower-2",
+                "lat": -6.8,
+                "lon": 39.2,
+                "timestamp": "2026-04-30T08:00:00+00:00",
+            },
+            {
+                "device_id_hash": "device-b",
+                "tower_id": "tower-2",
+                "lat": -6.8,
+                "lon": 39.2,
+                "timestamp": "2026-04-30T08:16:00+00:00",
+            },
+        ]
+    )
+
+    assert (published, filtered) == (1, 1)
+
+
+def test_telecom_connector_bbox_filter_rejects_outside_dsm_bbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    connector, _, _ = _make_connector(monkeypatch)
+
+    published, filtered = connector.ingest_batch(
+        [
+            {
+                "device_id_hash": "device-a",
+                "tower_id": "tower-1",
+                "lat": -8.0,
+                "lon": 39.2,
+                "timestamp": "2026-04-30T08:00:00+00:00",
+            }
+        ]
+    )
+
+    assert (published, filtered) == (0, 1)
+
+
+def test_telecom_connector_batch_publish_failure_propagates_ingestion_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    connector, _, _ = _make_connector(monkeypatch)
+
+    def fail_publish(message, topic):
+        raise IngestionError("boom")
+
+    monkeypatch.setattr(connector, "publish", fail_publish)
+
+    with pytest.raises(IngestionError):
+        connector.ingest_batch(
+            [
+                {
+                    "device_id_hash": "device-a",
+                    "tower_id": "tower-1",
+                    "lat": -6.8,
+                    "lon": 39.2,
+                    "timestamp": "2026-04-30T08:00:00+00:00",
+                }
+            ]
+        )
