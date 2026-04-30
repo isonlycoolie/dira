@@ -16,6 +16,7 @@ for package_path in (
         sys.path.insert(0, package_path_str)
 
 from dira_common.exceptions import IngestionError
+from connectors import fleet_gps as fleet_gps_module
 from connectors.base import BaseConnector
 from connectors.fleet_gps import FleetGPSConnector
 
@@ -65,6 +66,23 @@ def test_fleet_gps_connector_anonymizes_and_publishes(monkeypatch) -> None:
     assert payload["provider"] == "provider-a"
     assert payload["speed_kmh"] == 32.5
     assert payload["timestamp"] == "2026-04-30T08:15:00Z"
+
+
+def test_fleet_gps_connector_anonymization_uses_daily_salt(monkeypatch) -> None:
+    connector = FleetGPSConnector(fetcher=lambda api_url, api_key: [])
+    today_salt = date.today().isoformat()
+
+    assert connector._anonymize_vehicle_id("veh-1") == _expected_hash("veh-1", today_salt)
+
+    class FakeDate(date):
+        @classmethod
+        def today(cls) -> date:
+            return cls(2026, 4, 29)
+
+    monkeypatch.setattr(fleet_gps_module, "date", FakeDate)
+
+    assert connector._anonymize_vehicle_id("veh-1") == _expected_hash("veh-1", "2026-04-29")
+    assert connector._anonymize_vehicle_id("veh-1") != _expected_hash("veh-1", today_salt)
 
 
 def test_fleet_gps_connector_rejects_non_array_payload(monkeypatch) -> None:
