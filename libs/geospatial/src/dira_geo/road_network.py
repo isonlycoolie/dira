@@ -223,3 +223,108 @@ class OsmRoadNetworkExtractor:
                 last_error = exc
 
         raise TypeError("unsupported osmnx graph_from_bbox signature") from last_error
+
+
+class RoadNetworkLoader:
+    def load(self, gdf: Any, engine: Any) -> None:
+        gpd = _load_geopandas()
+        prepared = self._prepare_road_edges_frame(gdf, gpd)
+        prepared.to_postgis("road_edges", engine, if_exists="replace", index=False)
+        logger.info("loaded road edges rows=%s", int(len(prepared)))
+
+    def _prepare_road_edges_frame(self, gdf: Any, gpd: Any) -> Any:
+        frame = gdf.copy()
+        if "geometry" in frame.columns:
+            frame = frame.rename(columns={"geometry": "geom"})
+
+        frame["id"] = range(1, len(frame) + 1)
+        frame["osm_id"] = frame["osmid"].apply(self._coerce_osm_id) if "osmid" in frame.columns else frame["id"]
+        frame["from_node_id"] = frame["u"] if "u" in frame.columns else None
+        frame["to_node_id"] = frame["v"] if "v" in frame.columns else None
+        frame["name"] = frame["name"] if "name" in frame.columns else None
+        frame["road_type"] = frame["highway"].apply(self._coerce_road_type) if "highway" in frame.columns else "residential"
+        frame["length_m"] = frame["length"] if "length" in frame.columns else 0.0
+        frame["speed_limit_kmh"] = (
+            frame["maxspeed"].apply(self._coerce_speed_limit) if "maxspeed" in frame.columns else 50
+        )
+        frame["buffer_geom"] = None
+        frame["h3_index"] = None
+        frame["metadata"] = frame.apply(self._build_metadata, axis=1)
+
+        ordered_columns = [
+            "id",
+            "osm_id",
+            "from_node_id",
+            "to_node_id",
+            "name",
+            "road_type",
+            "length_m",
+            "speed_limit_kmh",
+            "geom",
+            "buffer_geom",
+            "h3_index",
+            "metadata",
+        ]
+        prepared = frame.reindex(columns=ordered_columns)
+        return gpd.GeoDataFrame(prepared, geometry="geom", crs=getattr(gdf, "crs", None))
+
+    def _coerce_osm_id(self, value: Any) -> int | None:
+        if isinstance(value, (list, tuple, set)):
+            value = next(iter(value), None)
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _coerce_road_type(self, value: Any) -> str:
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                normalized = str(item).lower()
+                if normalized in ALLOWED_ROAD_TYPES:
+                    return normalized
+            return "residential"
+
+        normalized = str(value).lower()
+        return normalized if normalized in ALLOWED_ROAD_TYPES else "residential"
+
+    def _coerce_speed_limit(self, value: Any) -> int:
+        if value is None:
+            return 50
+        if isinstance(value, (int, float)):
+            return int(value)
+
+        digits = "".join(character for character in str(value) if character.isdigit())
+        return int(digits) if digits else 50
+
+    def _build_metadata(self, row: Any) -> dict[str, Any]:
+        excluded_columns = {
+            "id",
+            "osm_id",
+            "osmid",
+            "from_node_id",
+            "to_node_id",
+            "u",
+            "v",
+            "name",
+            "road_type",
+            "highway",
+            "length_m",
+            "length",
+            "speed_limit_kmh",
+            "maxspeed",
+            "geom",
+            "geometry",
+            "buffer_geom",
+            "h3_index",
+            "metadata",
+        }
+        metadata = {}
+        for key, value in row.items():
+            if key in excluded_columns:
+                continue
+            if value is None:
+                continue
+            metadata[key] = value
+        return metadata
