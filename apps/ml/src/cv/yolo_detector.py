@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -9,6 +10,10 @@ if TYPE_CHECKING:
 
 VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle"}
 DEFAULT_MODEL_PATH = "yolo11n.pt"
+DEFAULT_CONFIDENCE_THRESHOLD = 0.25
+CPU_CONFIDENCE_THRESHOLD = 0.15
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,18 +32,34 @@ def _load_yolo_model(model_path: str = DEFAULT_MODEL_PATH) -> Any:
     return YOLO(model_path)
 
 
+def _detect_device() -> str:
+    try:
+        import torch
+    except ModuleNotFoundError:
+        return "cpu"
+
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
 class YOLODetector:
     def __init__(
         self,
         model: Any | None = None,
         model_path: str = DEFAULT_MODEL_PATH,
-        confidence_threshold: float = 0.25,
+        confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
         device: str | None = None,
     ) -> None:
+        resolved_device = device or _detect_device()
+        resolved_confidence_threshold = confidence_threshold
+        if device is None and resolved_device == "cpu" and confidence_threshold >= DEFAULT_CONFIDENCE_THRESHOLD:
+            resolved_confidence_threshold = CPU_CONFIDENCE_THRESHOLD
+
+        logger.info("Selected YOLO device: %s (confidence_threshold=%.2f)", resolved_device, resolved_confidence_threshold)
+
         self._model = model or _load_yolo_model(model_path)
         self.model_path = model_path
-        self.confidence_threshold = confidence_threshold
-        self.device = device
+        self.confidence_threshold = resolved_confidence_threshold
+        self.device = resolved_device
 
     def detect(self, frame: "np.ndarray") -> list[Detection]:
         predict_kwargs: dict[str, Any] = {"conf": self.confidence_threshold, "verbose": False}

@@ -38,8 +38,9 @@ class _FakeModel:
         return self.results
 
 
-def test_yolo_detector_filters_vehicle_classes() -> None:
+def test_yolo_detector_filters_vehicle_classes(monkeypatch) -> None:
     frame = object()
+    monkeypatch.setattr(yolo_detector_module, "_detect_device", lambda: "cuda")
     fake_model = _FakeModel(
         [
             _FakeResult(
@@ -60,11 +61,13 @@ def test_yolo_detector_filters_vehicle_classes() -> None:
         Detection(bbox=(10.0, 20.0, 30.0, 40.0), class_name="car", confidence=0.91),
         Detection(bbox=(5.0, 6.0, 7.0, 8.0), class_name="truck", confidence=0.77),
     ]
-    assert fake_model.predict_calls == [(frame, {"conf": 0.25, "verbose": False})]
+    assert fake_model.predict_calls == [(frame, {"conf": 0.25, "verbose": False, "device": "cuda"})]
 
 
 def test_yolo_detector_uses_default_model_path(monkeypatch) -> None:
     captured = {}
+
+    monkeypatch.setattr(yolo_detector_module, "_detect_device", lambda: "cuda")
 
     def fake_loader(model_path: str):
         captured["model_path"] = model_path
@@ -76,3 +79,27 @@ def test_yolo_detector_uses_default_model_path(monkeypatch) -> None:
 
     assert captured["model_path"] == "yolo11n.pt"
     assert detector.model_path == "yolo11n.pt"
+
+
+def test_yolo_detector_auto_detects_cuda_and_logs(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(yolo_detector_module, "_detect_device", lambda: "cuda")
+    monkeypatch.setattr(yolo_detector_module, "_load_yolo_model", lambda model_path: _FakeModel())
+
+    with caplog.at_level("INFO"):
+        detector = YOLODetector()
+
+    assert detector.device == "cuda"
+    assert detector.confidence_threshold == 0.25
+    assert "Selected YOLO device: cuda (confidence_threshold=0.25)" in caplog.text
+
+
+def test_yolo_detector_auto_detects_cpu_and_reduces_threshold(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(yolo_detector_module, "_detect_device", lambda: "cpu")
+    monkeypatch.setattr(yolo_detector_module, "_load_yolo_model", lambda model_path: _FakeModel())
+
+    with caplog.at_level("INFO"):
+        detector = YOLODetector()
+
+    assert detector.device == "cpu"
+    assert detector.confidence_threshold == 0.15
+    assert "Selected YOLO device: cpu (confidence_threshold=0.15)" in caplog.text
