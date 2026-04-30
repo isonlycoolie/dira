@@ -131,6 +131,36 @@ class PrometheusRegistry:
         "Latency for publishing telecom messages to Kafka.",
         (),
     )
+    cctv_frames_processed_total = _get_metric(
+        "cctv_frames_processed_total",
+        "counter",
+        "Total CCTV frames processed by the video pipeline.",
+        (),
+    )
+    cctv_vehicles_detected_total = _get_metric(
+        "cctv_vehicles_detected_total",
+        "counter",
+        "Total vehicles detected by the CCTV pipeline.",
+        (),
+    )
+    cctv_inference_latency_ms = _get_metric(
+        "cctv_inference_latency_ms",
+        "histogram",
+        "Inference latency in milliseconds for CCTV frame processing.",
+        (),
+    )
+    cctv_detections_published_total = _get_metric(
+        "cctv_detections_published_total",
+        "counter",
+        "Total CCTV detections published to Kafka.",
+        (),
+    )
+    cctv_stream_reconnects_total = _get_metric(
+        "cctv_stream_reconnects_total",
+        "counter",
+        "Total CCTV stream reconnect attempts.",
+        (),
+    )
 
 
 messages_published = PrometheusRegistry.messages_published
@@ -144,3 +174,8 @@ telecom_pings_filtered_residential_total = PrometheusRegistry.telecom_pings_filt
 telecom_pings_filtered_bbox_total = PrometheusRegistry.telecom_pings_filtered_bbox_total
 telecom_pings_published_total = PrometheusRegistry.telecom_pings_published_total
 telecom_publish_latency_seconds = PrometheusRegistry.telecom_publish_latency_seconds
+cctv_frames_processed_total = PrometheusRegistry.cctv_frames_processed_total
+cctv_vehicles_detected_total = PrometheusRegistry.cctv_vehicles_detected_total
+cctv_inference_latency_ms = PrometheusRegistry.cctv_inference_latency_ms
+cctv_detections_published_total = PrometheusRegistry.cctv_detections_published_total
+cctv_stream_reconnects_total = PrometheusRegistry.cctv_stream_reconnects_total

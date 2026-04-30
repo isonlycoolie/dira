@@ -20,6 +20,7 @@ from connectors.base import BaseConnector
 from connectors.cctv import CCTVConnector
 from cv.frame_processor import FrameResult
 from cv.yolo_detector import Detection
+from dira_common.metrics import PrometheusRegistry
 from dira_schemas.cv import CVDetection
 
 
@@ -72,10 +73,27 @@ class _FakeProducer:
         return None
 
 
+def _metric_value(metric: object) -> float:
+    value = getattr(metric, "value", None)
+    if value is not None:
+        return float(value)
+
+    for family in metric.collect():  # type: ignore[attr-defined]
+        for sample in family.samples:
+            if sample.name.endswith("_total") or sample.name.endswith("_count"):
+                return float(sample.value)
+    raise AssertionError("unable to read metric value")
+
+
 def test_cctv_connector_processes_and_publishes_frame(monkeypatch) -> None:
     fake_processor = _FakeFrameProcessor()
     fake_extractor = _FakeMetricsExtractor()
     fake_producer = _FakeProducer()
+
+    start_frames = _metric_value(PrometheusRegistry.cctv_frames_processed_total)
+    start_vehicles = _metric_value(PrometheusRegistry.cctv_vehicles_detected_total)
+    start_published = _metric_value(PrometheusRegistry.cctv_detections_published_total)
+    start_latency_samples = len(getattr(PrometheusRegistry.cctv_inference_latency_ms, "samples", []))
 
     monkeypatch.setattr(BaseConnector, "_connect_producer", lambda self: setattr(self, "_producer", fake_producer))
 
@@ -96,6 +114,33 @@ def test_cctv_connector_processes_and_publishes_frame(monkeypatch) -> None:
     assert frame_metadata["frame_timestamp"].tzinfo == UTC
     assert fake_producer.calls[0][0] == "dira.raw.cctv"
     assert fake_producer.calls[0][1].camera_id == "cam-dsm-01"
+    assert _metric_value(PrometheusRegistry.cctv_frames_processed_total) == start_frames + 1
+    assert _metric_value(PrometheusRegistry.cctv_vehicles_detected_total) == start_vehicles + 1
+    assert _metric_value(PrometheusRegistry.cctv_detections_published_total) == start_published + 1
+    assert len(getattr(PrometheusRegistry.cctv_inference_latency_ms, "samples", [])) == start_latency_samples + 1
+
+
+def test_cctv_connector_counts_rtsp_reconnects(monkeypatch) -> None:
+    fake_processor = _FakeFrameProcessor()
+    fake_extractor = _FakeMetricsExtractor()
+    fake_producer = _FakeProducer()
+
+    start_reconnects = _metric_value(PrometheusRegistry.cctv_stream_reconnects_total)
+
+    monkeypatch.setattr(BaseConnector, "_connect_producer", lambda self: setattr(self, "_producer", fake_producer))
+    monkeypatch.setattr(cctv_module.time, "sleep", lambda seconds: (_ for _ in ()).throw(RuntimeError("stop after reconnect")))
+
+    connector = CCTVConnector(frame_processor=fake_processor, metrics_extractor=fake_extractor)
+    monkeypatch.setattr(connector, "_run_once", lambda camera_id, camera_config, video_source: (_ for _ in ()).throw(RuntimeError("stream lost")))
+
+    try:
+        connector.run("cam-dsm-01", "rtsp://camera")
+    except RuntimeError as exc:
+        assert "stop after reconnect" in str(exc)
+    else:
+        raise AssertionError("rtsp reconnect should abort after the injected sleep failure")
+
+    assert _metric_value(PrometheusRegistry.cctv_stream_reconnects_total) == start_reconnects + 1
 
 
 def test_cctv_connector_fails_fast_for_unknown_camera() -> None:

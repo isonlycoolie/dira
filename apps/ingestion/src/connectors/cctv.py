@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from dira_common.metrics import PrometheusRegistry
 from dira_schemas.cv import CVDetection
 
 from cv.frame_processor import FrameProcessor, FrameResult
@@ -61,6 +62,7 @@ class CCTVConnector(BaseConnector):
             except Exception as exc:  # noqa: BLE001
                 if not is_rtsp_source:
                     raise
+                PrometheusRegistry.cctv_stream_reconnects_total.inc()
                 logger.warning("Reconnecting CCTV stream for %s after error: %s", camera_id, exc)
                 time.sleep(self._reconnect_delay_seconds)
                 continue
@@ -74,9 +76,13 @@ class CCTVConnector(BaseConnector):
         prev_detections: list[Detection] = []
 
         for frame_result in frame_processor.process(video_source):
+            PrometheusRegistry.cctv_frames_processed_total.inc()
+            PrometheusRegistry.cctv_inference_latency_ms.observe(frame_result.inference_latency_ms)
             frame_metadata = self._frame_metadata(camera_id, camera_config, frame_result)
             cv_detection = metrics_extractor.extract(frame_result.detections, prev_detections, frame_metadata)
             self.publish(cv_detection, DEFAULT_CCTV_TOPIC)
+            PrometheusRegistry.cctv_detections_published_total.inc()
+            PrometheusRegistry.cctv_vehicles_detected_total.inc(cv_detection.vehicle_count)
             prev_detections = frame_result.detections
 
     def _camera_config(self, camera_id: str) -> dict[str, Any]:
