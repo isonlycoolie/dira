@@ -1,0 +1,23 @@
+{
+  "cam-dsm-01": {
+    "road_segment_id": 101,
+    "location_name": "DSM Northbound Gate",
+    "pixel_per_meter": 4.5,
+    "lat": -6.81,
+    "lon": 39.21
+  },
+  "cam-dsm-02": {
+    "road_segment_id": 102,
+    "location_name": "DSM Central Junction",
+    "pixel_per_meter": 5.0,
+    "lat": -6.79,
+    "lon": 39.23
+  },
+  "cam-dsm-03": {
+    "road_segment_id": 103,
+    "location_name": "DSM Waterfront Spur",
+    "pixel_per_meter": 4.2,
+    "lat": -6.77,
+    "lon": 39.25
+  }
+}
