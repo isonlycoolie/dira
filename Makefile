@@ -23,7 +23,7 @@ docker-down:
 	docker compose down
 
 migrate:
-	python -m alembic upgrade head
+	python -m alembic -c data/migrations/alembic.ini upgrade head
 
 bootstrap-roads:
 	python scripts/bootstrap_road_network.py
