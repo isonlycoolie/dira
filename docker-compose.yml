@@ -88,6 +88,22 @@ services:
       timeout: 10s
       retries: 10
 
+  kafka-init:
+    image: python:3.12-slim
+    container_name: dira-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      KAFKA_BROKERS: kafka:9092
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+    command: sh -c "python -m pip install --no-cache-dir kafka-python && python scripts/init_kafka_topics.py"
+    restart: "no"
+
   grafana:
     image: grafana/grafana:latest
     container_name: dira-grafana
