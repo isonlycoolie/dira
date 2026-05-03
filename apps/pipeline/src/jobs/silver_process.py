@@ -49,4 +49,43 @@ def build_raw_kafka_stream(
     )
 
 
-__all__ = ["RAW_KAFKA_TOPICS", "build_raw_kafka_stream"]
+class SegmentAggregationTransform:
+    WINDOW_DURATION = "30 seconds"
+
+    def __init__(
+        self,
+        event_time_column: str = "event_time",
+        road_segment_column: str = "road_segment_id",
+        speed_column: str = "speed_kmh",
+        flow_column: str = "flow",
+    ) -> None:
+        self._event_time_column = event_time_column
+        self._road_segment_column = road_segment_column
+        self._speed_column = speed_column
+        self._flow_column = flow_column
+
+    def aggregate(self, df: DataFrame) -> DataFrame:
+        from pyspark.sql.functions import avg, col, count, sum, window
+
+        grouped = df.groupBy(
+            self._road_segment_column,
+            window(col(self._event_time_column), self.WINDOW_DURATION),
+        ).agg(
+            count(col(self._road_segment_column)).alias("vehicle_count"),
+            avg(col(self._speed_column)).alias("avg_speed_kmh"),
+            sum(col(self._flow_column)).alias("flow_rate"),
+        )
+
+        return grouped.selectExpr(
+            self._road_segment_column,
+            "window.start AS event_time",
+            "vehicle_count",
+            "avg_speed_kmh",
+            "flow_rate",
+        )
+
+    def apply(self, df: DataFrame) -> DataFrame:
+        return self.aggregate(df)
+
+
+__all__ = ["RAW_KAFKA_TOPICS", "SegmentAggregationTransform", "build_raw_kafka_stream"]

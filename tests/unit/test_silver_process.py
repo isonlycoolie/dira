@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import types
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -11,7 +12,7 @@ for package_path in (
     if package_path_str not in sys.path:
         sys.path.insert(0, package_path_str)
 
-from jobs.silver_process import RAW_KAFKA_TOPICS, build_raw_kafka_stream
+from jobs.silver_process import RAW_KAFKA_TOPICS, SegmentAggregationTransform, build_raw_kafka_stream
 
 
 class _FakeDataFrame:
@@ -46,6 +47,41 @@ class _FakeSparkSession:
         self.readStream = _FakeReadStreamBuilder()
 
 
+class _FakeAggregationResult:
+    def __init__(self, function_name: str, operand: object) -> None:
+        self.function_name = function_name
+        self.operand = operand
+
+    def alias(self, alias_name: str) -> tuple[str, str, object, str]:
+        return ("alias", self.function_name, self.operand, alias_name)
+
+
+class _FakeWindowResult:
+    def __init__(self, expression: object, duration: str) -> None:
+        self.expression = expression
+        self.duration = duration
+        self.start = ("window_start", expression, duration)
+
+
+class _FakeAggregationFrame:
+    def __init__(self) -> None:
+        self.group_by_calls: list[tuple[object, ...]] = []
+        self.agg_calls: list[tuple[object, ...]] = []
+        self.select_exprs: list[str] = []
+
+    def groupBy(self, *keys: object) -> _FakeAggregationFrame:
+        self.group_by_calls.append(keys)
+        return self
+
+    def agg(self, *expressions: object) -> _FakeAggregationFrame:
+        self.agg_calls.append(expressions)
+        return self
+
+    def selectExpr(self, *expressions: str) -> _FakeAggregationFrame:
+        self.select_exprs = list(expressions)
+        return self
+
+
 def test_build_raw_kafka_stream_subscribes_and_decodes_utf8_json() -> None:
     spark = _FakeSparkSession()
 
@@ -63,4 +99,66 @@ def test_build_raw_kafka_stream_subscribes_and_decodes_utf8_json() -> None:
         "partition",
         "offset",
         "timestamp",
+    ]
+
+
+def test_segment_aggregation_transform_groups_and_projects_windows(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    fake_functions = types.ModuleType("pyspark.sql.functions")
+
+    def _col(name: str) -> tuple[str, str]:
+        return ("col", name)
+
+    def _count(expression: object) -> _FakeAggregationResult:
+        return _FakeAggregationResult("count", expression)
+
+    def _avg(expression: object) -> _FakeAggregationResult:
+        return _FakeAggregationResult("avg", expression)
+
+    def _sum(expression: object) -> _FakeAggregationResult:
+        return _FakeAggregationResult("sum", expression)
+
+    def _window(expression: object, duration: str) -> _FakeWindowResult:
+        captured["window"] = (expression, duration)
+        window_result = _FakeWindowResult(expression, duration)
+        captured["window_result"] = window_result
+        return window_result
+
+    fake_functions.col = _col
+    fake_functions.count = _count
+    fake_functions.avg = _avg
+    fake_functions.sum = _sum
+    fake_functions.window = _window
+
+    fake_sql = types.ModuleType("pyspark.sql")
+    fake_sql.functions = fake_functions
+    fake_pyspark = types.ModuleType("pyspark")
+    fake_pyspark.__path__ = []  # type: ignore[attr-defined]
+    fake_pyspark.sql = fake_sql
+
+    monkeypatch.setitem(sys.modules, "pyspark", fake_pyspark)
+    monkeypatch.setitem(sys.modules, "pyspark.sql", fake_sql)
+    monkeypatch.setitem(sys.modules, "pyspark.sql.functions", fake_functions)
+
+    frame = _FakeAggregationFrame()
+    transform = SegmentAggregationTransform()
+
+    result = transform.aggregate(frame)
+
+    assert result is frame
+    assert captured["window"] == (("col", "event_time"), "30 seconds")
+    assert frame.group_by_calls == [("road_segment_id", captured["window_result"])]
+    assert frame.agg_calls == [
+        (
+            ("alias", "count", ("col", "road_segment_id"), "vehicle_count"),
+            ("alias", "avg", ("col", "speed_kmh"), "avg_speed_kmh"),
+            ("alias", "sum", ("col", "flow"), "flow_rate"),
+        )
+    ]
+    assert frame.select_exprs == [
+        "road_segment_id",
+        "window.start AS event_time",
+        "vehicle_count",
+        "avg_speed_kmh",
+        "flow_rate",
     ]
