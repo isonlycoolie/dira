@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from dira_schemas.enums import WeatherCondition
 from dira_schemas.events import UnifiedTrafficEvent
 
 if TYPE_CHECKING:
@@ -144,4 +145,22 @@ class UpstreamDownstreamSpeedFeatureTransform:
         return enriched
 
 
-__all__ = ["CongestionIndexCalculator", "DwellTimeDetector", "UpstreamDownstreamSpeedFeatureTransform"]
+class WeatherImpactFactor:
+    WEATHER_MULTIPLIERS: dict[WeatherCondition, float] = {
+        WeatherCondition.RAIN: 1.10,
+        WeatherCondition.HEAVY_RAIN: 1.20,
+        WeatherCondition.FOG: 1.15,
+        WeatherCondition.CLEAR: 1.0,
+    }
+
+    def adjust_congestion_score(self, base_score: float, weather: WeatherCondition) -> float:
+        multiplier = self.WEATHER_MULTIPLIERS.get(weather, 1.0)
+        return max(0.0, min(1.0, base_score * multiplier))
+
+
+__all__ = [
+    "CongestionIndexCalculator",
+    "DwellTimeDetector",
+    "UpstreamDownstreamSpeedFeatureTransform",
+    "WeatherImpactFactor",
+]
