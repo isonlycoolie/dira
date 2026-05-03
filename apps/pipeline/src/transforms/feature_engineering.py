@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import TYPE_CHECKING, Any
 
 from dira_schemas.events import UnifiedTrafficEvent
+
+if TYPE_CHECKING:
+    from pyspark.sql import DataFrame
+else:
+    DataFrame = Any
 
 
 class CongestionIndexCalculator:
@@ -66,4 +72,76 @@ class DwellTimeDetector:
         return (window.avg_speed_kmh or 0.0) < self.LOW_SPEED_THRESHOLD_KMH
 
 
-__all__ = ["CongestionIndexCalculator", "DwellTimeDetector"]
+class UpstreamDownstreamSpeedFeatureTransform:
+    def __init__(
+        self,
+        road_graph: DataFrame,
+        road_segment_column: str = "road_segment_id",
+        graph_segment_column: str = "id",
+        from_node_column: str = "from_node_id",
+        to_node_column: str = "to_node_id",
+        speed_column: str = "avg_speed_kmh",
+    ) -> None:
+        self._road_graph = road_graph
+        self._road_segment_column = road_segment_column
+        self._graph_segment_column = graph_segment_column
+        self._from_node_column = from_node_column
+        self._to_node_column = to_node_column
+        self._speed_column = speed_column
+
+    def apply(self, df: DataFrame) -> DataFrame:
+        from pyspark.sql.functions import broadcast, col
+
+        road_graph = broadcast(
+            self._road_graph.selectExpr(
+                f"CAST({self._graph_segment_column} AS BIGINT) AS {self._road_segment_column}",
+                self._from_node_column,
+                self._to_node_column,
+            )
+        )
+        upstream_neighbors = road_graph.selectExpr(
+            f"{self._road_segment_column} AS upstream_road_segment_id",
+            f"{self._to_node_column} AS upstream_to_node_id",
+        )
+        downstream_neighbors = road_graph.selectExpr(
+            f"{self._road_segment_column} AS downstream_road_segment_id",
+            f"{self._from_node_column} AS downstream_from_node_id",
+        )
+
+        upstream_map = road_graph.join(
+            upstream_neighbors,
+            col(self._from_node_column) == col("upstream_to_node_id"),
+            "left",
+        ).selectExpr(
+            self._road_segment_column,
+            "upstream_road_segment_id",
+        )
+        downstream_map = road_graph.join(
+            downstream_neighbors,
+            col(self._to_node_column) == col("downstream_from_node_id"),
+            "left",
+        ).selectExpr(
+            self._road_segment_column,
+            "downstream_road_segment_id",
+        )
+
+        upstream_speed_lookup = df.selectExpr(
+            f"{self._road_segment_column} AS upstream_road_segment_id",
+            f"{self._speed_column} AS upstream_speed_kmh",
+        )
+        downstream_speed_lookup = df.selectExpr(
+            f"{self._road_segment_column} AS downstream_road_segment_id",
+            f"{self._speed_column} AS downstream_speed_kmh",
+        )
+
+        enriched = (
+            df.join(broadcast(upstream_map), self._road_segment_column, "left")
+            .join(upstream_speed_lookup, "upstream_road_segment_id", "left")
+            .join(broadcast(downstream_map), self._road_segment_column, "left")
+            .join(downstream_speed_lookup, "downstream_road_segment_id", "left")
+            .drop("upstream_road_segment_id", "downstream_road_segment_id")
+        )
+        return enriched
+
+
+__all__ = ["CongestionIndexCalculator", "DwellTimeDetector", "UpstreamDownstreamSpeedFeatureTransform"]
