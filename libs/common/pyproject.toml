@@ -12,6 +12,7 @@ dependencies = [
   "pydantic-settings>=2.7",
   "structlog",
   "prometheus-client",
+  "pandas",
   "tenacity",
   "kafka-python",
 ]

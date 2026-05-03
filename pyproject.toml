@@ -4,3 +4,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.workspace]
 members = ["apps/*", "libs/*"]
+
+[tool.pytest.ini_options]
+markers = [
+  "integration: integration tests that exercise the silver job and other end-to-end flows",
+]
