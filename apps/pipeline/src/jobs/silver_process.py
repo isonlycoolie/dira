@@ -7,6 +7,8 @@ from datetime import datetime
 from typing import Callable
 from typing import TYPE_CHECKING, Any
 
+from dira_common.storage import GCSParquetClient
+
 if TYPE_CHECKING:
     from pyspark.sql import DataFrame, SparkSession
 else:
@@ -109,6 +111,8 @@ class SilverPostgresWriter:
         table_name: str = "traffic_events",
         batch_size: int = 500,
         connection_factory: Callable[[str, Any | None], Any] | None = None,
+        checkpoint_client: GCSParquetClient | None = None,
+        checkpoint_root: str = "gs://dira-silver",
         logger: Any | None = None,
     ) -> None:
         if batch_size <= 0:
@@ -118,6 +122,8 @@ class SilverPostgresWriter:
         self._table_name = table_name
         self._batch_size = batch_size
         self._connection_factory = connection_factory or self._default_connection_factory
+        self._checkpoint_client = checkpoint_client
+        self._checkpoint_root = checkpoint_root.rstrip("/")
         self._logger = logger or globals()["logger"]
 
     def foreach_batch(self, batch_df: DataFrame, batch_id: int) -> None:
@@ -139,6 +145,7 @@ class SilverPostgresWriter:
                 total_rows_written += len(chunk)
 
             self._commit(connection)
+            self._write_checkpoint(rows, batch_id)
             self._logger.info(
                 "wrote silver postgres batch",
                 batch_id=batch_id,
@@ -155,6 +162,45 @@ class SilverPostgresWriter:
     def _collect_rows(self, batch_df: DataFrame) -> list[Any]:
         collected_rows = batch_df.collect()
         return list(collected_rows or [])
+
+    def _write_checkpoint(self, rows: list[Any], batch_id: int) -> None:
+        if self._checkpoint_client is None:
+            return
+
+        checkpoint_frame = self._rows_to_pandas_frame(rows)
+        if checkpoint_frame.empty:
+            return
+
+        import pandas as pd
+
+        checkpoint_frame = checkpoint_frame.copy()
+        checkpoint_frame["event_time"] = pd.to_datetime(checkpoint_frame["event_time"], utc=True, errors="coerce")
+        checkpoint_frame = checkpoint_frame.dropna(subset=["event_time"])
+        if checkpoint_frame.empty:
+            return
+
+        checkpoint_frame["checkpoint_date"] = checkpoint_frame["event_time"].dt.strftime("%Y-%m-%d")
+        checkpoint_frame["checkpoint_hour"] = checkpoint_frame["event_time"].dt.strftime("%H")
+
+        for (checkpoint_date, checkpoint_hour), partition_frame in checkpoint_frame.groupby(
+            ["checkpoint_date", "checkpoint_hour"],
+            sort=True,
+        ):
+            bucket_path = (
+                f"{self._checkpoint_root}/{checkpoint_date}/{checkpoint_hour}/part-{batch_id}.parquet"
+            )
+            payload_frame = partition_frame.drop(columns=["checkpoint_date", "checkpoint_hour"])
+            self._checkpoint_client.write_parquet(bucket_path, payload_frame)
+
+    @staticmethod
+    def _rows_to_pandas_frame(rows: list[Any]) -> Any:
+        import pandas as pd
+
+        payload_rows = [
+            row.asDict(recursive=True) if hasattr(row, "asDict") else dict(row)
+            for row in rows
+        ]
+        return pd.DataFrame(payload_rows)
 
     def _chunk_rows(self, rows: list[Any]) -> list[list[Any]]:
         return [rows[start : start + self._batch_size] for start in range(0, len(rows), self._batch_size)]
@@ -253,6 +299,8 @@ def build_silver_postgres_foreach_batch_writer(
     table_name: str = "traffic_events",
     batch_size: int = 500,
     connection_factory: Callable[[str, Any | None], Any] | None = None,
+    checkpoint_client: GCSParquetClient | None = None,
+    checkpoint_root: str = "gs://dira-silver",
     logger: Any | None = None,
 ) -> Callable[[DataFrame, int], None]:
     writer = SilverPostgresWriter(
@@ -260,6 +308,8 @@ def build_silver_postgres_foreach_batch_writer(
         table_name=table_name,
         batch_size=batch_size,
         connection_factory=connection_factory,
+        checkpoint_client=checkpoint_client or GCSParquetClient(),
+        checkpoint_root=checkpoint_root,
         logger=logger,
     )
     return writer.foreach_batch

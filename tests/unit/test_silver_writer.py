@@ -5,7 +5,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-for package_path in (PROJECT_ROOT / "apps" / "pipeline" / "src",):
+for package_path in (
+    PROJECT_ROOT / "apps" / "pipeline" / "src",
+    PROJECT_ROOT / "libs" / "common" / "src",
+    PROJECT_ROOT / "libs" / "schemas" / "src",
+):
     package_path_str = str(package_path)
     if package_path_str not in sys.path:
         sys.path.insert(0, package_path_str)
@@ -96,6 +100,14 @@ class _FakeLogger:
         self.info_calls.append((message, kwargs))
 
 
+class _FakeCheckpointClient:
+    def __init__(self) -> None:
+        self.writes: list[tuple[str, object]] = []
+
+    def write_parquet(self, bucket_path: str, frame: object) -> None:
+        self.writes.append((bucket_path, frame.copy()))
+
+
 def test_silver_postgres_writer_upserts_in_batches_of_500() -> None:
     connection = _FakeConnection()
     logger = _FakeLogger()
@@ -151,3 +163,62 @@ def test_build_silver_postgres_foreach_batch_writer_returns_callback() -> None:
     callback = build_silver_postgres_foreach_batch_writer("postgresql://localhost:5432/dira")
 
     assert callable(callback)
+
+
+def test_silver_postgres_writer_writes_hour_partitioned_checkpoint() -> None:
+    connection = _FakeConnection()
+    checkpoint_client = _FakeCheckpointClient()
+
+    def connection_factory(database_url: str, spark_session: object | None) -> _FakeConnection:
+        assert database_url == "jdbc:postgresql://localhost:5432/dira"
+        return connection
+
+    writer = SilverPostgresWriter(
+        database_url="postgresql://localhost:5432/dira",
+        batch_size=500,
+        connection_factory=connection_factory,
+        checkpoint_client=checkpoint_client,
+    )
+
+    rows = [
+        _FakeRow(
+            {
+                "road_segment_id": 7,
+                "event_time": datetime(2026, 4, 30, 8, 15, tzinfo=UTC),
+                "vehicle_count": 10,
+                "avg_speed_kmh": 22.5,
+                "flow_rate": 9.0,
+            }
+        ),
+        _FakeRow(
+            {
+                "road_segment_id": 7,
+                "event_time": datetime(2026, 4, 30, 8, 45, tzinfo=UTC),
+                "vehicle_count": 11,
+                "avg_speed_kmh": 23.0,
+                "flow_rate": 9.5,
+            }
+        ),
+        _FakeRow(
+            {
+                "road_segment_id": 7,
+                "event_time": datetime(2026, 4, 30, 9, 5, tzinfo=UTC),
+                "vehicle_count": 12,
+                "avg_speed_kmh": 24.0,
+                "flow_rate": 10.0,
+            }
+        ),
+    ]
+    frame = _FakeBatchFrame(rows)
+
+    writer.foreach_batch(frame, 88)
+
+    assert len(checkpoint_client.writes) == 2
+    assert checkpoint_client.writes[0][0] == "gs://dira-silver/2026-04-30/08/part-88.parquet"
+    assert checkpoint_client.writes[1][0] == "gs://dira-silver/2026-04-30/09/part-88.parquet"
+    first_partition = checkpoint_client.writes[0][1]
+    second_partition = checkpoint_client.writes[1][1]
+    assert list(first_partition["vehicle_count"]) == [10, 11]
+    assert list(second_partition["vehicle_count"]) == [12]
+    assert connection.commits == 1
+    assert connection.rollbacks == 0

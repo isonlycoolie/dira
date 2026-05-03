@@ -7,6 +7,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 for package_path in (
     PROJECT_ROOT / "apps" / "pipeline" / "src",
+    PROJECT_ROOT / "libs" / "common" / "src",
+    PROJECT_ROOT / "libs" / "schemas" / "src",
 ):
     package_path_str = str(package_path)
     if package_path_str not in sys.path:
