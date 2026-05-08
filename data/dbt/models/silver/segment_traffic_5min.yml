@@ -1,0 +1,61 @@
+version: 2
+
+models:
+  - name: segment_traffic_5min
+    description: |
+      5-minute windowed traffic aggregation per road segment.
+      Computes congestion score, level, dwell flag, and enrichment features.
+      Materialized as a view for real-time dashboard/API access.
+    columns:
+      - name: road_segment_id
+        description: Foreign key to road_edges.id
+        tests:
+          - not_null
+          - relationships:
+              to: source('dira', 'road_edges')
+              field: id
+      
+      - name: event_time
+        description: Start time of the 5-minute window
+        tests:
+          - not_null
+      
+      - name: window_end
+        description: End time of the 5-minute window
+      
+      - name: vehicle_count
+        description: Total vehicles in the window
+      
+      - name: avg_speed_kmh
+        description: Average speed in km/h for the window
+      
+      - name: flow_rate
+        description: Vehicles per hour (flow rate)
+      
+      - name: upstream_speed_kmh
+        description: Average speed of the previous segment (upstream neighbor)
+      
+      - name: weather_factor
+        description: Weather condition indicator (CLEAR, RAIN, HEAVY_RAIN, FOG)
+      
+      - name: dwell_flag
+        description: Boolean indicating if 3+ consecutive windows have avg_speed_kmh < 5
+      
+      - name: congestion_score
+        description: Normalized congestion index (0.0–1.0)
+        tests:
+          - not_null
+          - expression_is_true:
+              expression: "congestion_score >= 0.0 and congestion_score <= 1.0"
+              config:
+                error_if: "> 0"
+                warn_if: "> 0"
+      
+      - name: congestion_level
+        description: Categorical congestion level (free_flow, light, moderate, heavy, severe)
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['free_flow', 'light', 'moderate', 'heavy', 'severe']
+              config:
+                error_if: "> 0"
