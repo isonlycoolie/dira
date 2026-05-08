@@ -163,3 +163,52 @@ async def get_congestion_heatmap(
         features.append(feature)
 
     return {"type": "FeatureCollection", "features": features}
+
+
+@router.get("/segments/{segment_id}/predictions")
+async def get_segment_predictions(
+    segment_id: int,
+    db=Depends(get_db),
+) -> dict[str, Any]:
+    """Return the latest ML prediction for a segment or a historical average fallback.
+
+    Response shape includes `model` indicating source (e.g., 'xgboost' or 'historical_avg').
+    """
+    # try to fetch latest model prediction
+    sql_pred = """
+    SELECT predicted_at, model_name, predicted_speed_kmh, confidence
+    FROM segment_predictions
+    WHERE road_segment_id = $1
+    ORDER BY predicted_at DESC
+    LIMIT 1
+    """
+    preds = await db.fetch(sql_pred, segment_id)  # type: ignore[attr-defined]
+    if preds:
+        row = preds[0]
+        return {
+            "road_segment_id": row.get("road_segment_id") if hasattr(row, "get") else row.get("road_segment_id", segment_id),
+            "predicted_at": row.get("predicted_at") if hasattr(row, "get") else row.get("predicted_at"),
+            "predicted_speed_kmh": row.get("predicted_speed_kmh") if hasattr(row, "get") else row.get("predicted_speed_kmh"),
+            "confidence": row.get("confidence") if hasattr(row, "get") else row.get("confidence"),
+            "model": row.get("model_name") if hasattr(row, "get") else row.get("model_name"),
+        }
+
+    # fallback: compute historical average speed for last 7 days
+    sql_hist = """
+    SELECT avg(avg_speed_kmh) as predicted_speed_kmh
+    FROM segment_traffic_5min
+    WHERE road_segment_id = $1
+      AND event_time >= now() - interval '7 days'
+    """
+    hist = await db.fetch(sql_hist, segment_id)  # type: ignore[attr-defined]
+    predicted_speed = None
+    if hist and len(hist) > 0:
+        predicted_speed = hist[0].get("predicted_speed_kmh") if hasattr(hist[0], "get") else hist[0].get("predicted_speed_kmh")
+
+    return {
+        "road_segment_id": segment_id,
+        "predicted_at": None,
+        "predicted_speed_kmh": predicted_speed,
+        "confidence": None,
+        "model": "historical_avg",
+    }
