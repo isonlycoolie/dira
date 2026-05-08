@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Optional
+import json
 
 from fastapi import APIRouter, Depends, Query
 
@@ -87,3 +88,78 @@ async def get_segment_traffic(
             "congestion_score": row.get("congestion_score") if hasattr(row, "get") else row["congestion_score"],
         })
     return results
+
+
+@router.get("/congestion/heatmap")
+async def get_congestion_heatmap(
+    bbox: Optional[str] = Query(None, description="BBox as minx,miny,maxx,maxy"),
+    db=Depends(get_db),
+) -> dict[str, Any]:
+    """Return a GeoJSON FeatureCollection of segment centroids with congestion scores.
+
+    - `bbox` (optional): comma-separated minx,miny,maxx,maxy to filter segments.
+    """
+    sql = """
+    SELECT
+        re.id as road_segment_id,
+        ST_AsGeoJSON(ST_Centroid(re.geom)) as centroid,
+        st.avg_speed_kmh,
+        st.congestion_score
+    FROM road_edges re
+    LEFT JOIN LATERAL (
+        SELECT avg_speed_kmh, congestion_score
+        FROM segment_traffic_5min st
+        WHERE st.road_segment_id = re.id
+        ORDER BY event_time DESC
+        LIMIT 1
+    ) st ON true
+    """
+
+    params: list[Any] = []
+    if bbox:
+        try:
+            minx, miny, maxx, maxy = [float(x) for x in bbox.split(",")]
+            sql = sql + "\n WHERE ST_Intersects(re.geom, ST_MakeEnvelope($1, $2, $3, $4, 4326))"
+            params = [minx, miny, maxx, maxy]
+        except Exception:
+            params = []
+
+    rows = await db.fetch(sql, *params)  # type: ignore[attr-defined]
+
+    def _congestion_level(score: Optional[float]) -> str:
+        if score is None:
+            return "unknown"
+        if score >= 0.75:
+            return "severe"
+        if score >= 0.5:
+            return "heavy"
+        if score >= 0.25:
+            return "moderate"
+        return "free_flow"
+
+    features: list[dict[str, Any]] = []
+    for row in rows:
+        centroid_raw = row.get("centroid") if hasattr(row, "get") else row["centroid"]
+        try:
+            geometry = json.loads(centroid_raw) if isinstance(centroid_raw, str) else centroid_raw
+        except Exception:
+            geometry = None
+
+        score = row.get("congestion_score") if hasattr(row, "get") else row["congestion_score"]
+        avg_speed = row.get("avg_speed_kmh") if hasattr(row, "get") else row["avg_speed_kmh"]
+
+        prop = {
+            "road_segment_id": row.get("road_segment_id") if hasattr(row, "get") else row["road_segment_id"],
+            "congestion_score": score,
+            "congestion_level": _congestion_level(score),
+            "avg_speed_kmh": avg_speed,
+        }
+
+        feature = {
+            "type": "Feature",
+            "geometry": geometry,
+            "properties": prop,
+        }
+        features.append(feature)
+
+    return {"type": "FeatureCollection", "features": features}
